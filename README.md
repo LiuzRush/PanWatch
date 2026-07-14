@@ -214,14 +214,6 @@ cd frontend && pnpm install && pnpm dev       # 前端 :5183
 
 </details>
 
-## 捐赠支持
-
-如果你觉得 PanWatch 有帮助，欢迎请作者喝杯咖啡：
-
-| 微信赞赏 | 支付宝 |
-|:---:|:---:|
-| <img src="./docs/donate/wechat.png" width="240" /> | <img src="./docs/donate/alipay.png" width="240" /> |
-
 ## 贡献
 
 欢迎提交 Issue 和 PR！自定义 Agent 和数据源开发请参考 [贡献指南](CONTRIBUTING.md)。
