@@ -15,6 +15,7 @@ AGENT_KIND_CAPABILITY = "capability"
 WORKFLOW_AGENT_NAMES: tuple[str, ...] = (
     "premarket_outlook",
     "intraday_monitor",
+    "caterpillar",
     "daily_report",
 )
 
@@ -84,6 +85,23 @@ AGENT_SEED_SPECS: tuple[AgentSeedSpec, ...] = (
             "stop_loss_warning": -5.0,
             "take_profit_warning": 10.0,
             "throttle_minutes": 30,
+        },
+    ),
+    AgentSeedSpec(
+        name="caterpillar",
+        display_name="毛毛虫做T",
+        description="高频日内做差价，结合竞价/涨速/资金/大盘/板块判断高抛低吸，积累利润垫而不堆高仓位",
+        enabled=False,
+        schedule="*/10 9-15 * * 1-5",
+        execution_mode="single",
+        kind=AGENT_KIND_WORKFLOW,
+        visible=True,
+        display_order=25,
+        config={
+            "throttle_minutes": 15,
+            "price_alert_threshold": 1.0,
+            "volume_alert_ratio": 1.5,
+            "include_boards": True,
         },
     ),
     AgentSeedSpec(

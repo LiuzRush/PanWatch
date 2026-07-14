@@ -26,6 +26,11 @@ CN_INDICES = [
     ("399006", "创业板指", "sz"),
 ]
 
+# 个股板块缓存：行业榜快照（TTL）+ symbol→所属行业（按日缓存）
+_SECTOR_BOARD_CACHE: dict = {"ts": 0.0, "df": None}
+_SECTOR_BOARD_TTL_S = 180.0
+_SYMBOL_INDUSTRY_CACHE: dict = {}  # symbol -> (date_str, industry_name)
+
 
 def _tencent_symbol(symbol: str, market: MarketCode = MarketCode.CN) -> str:
     """转换为腾讯 API 格式: sh600519 / sz000001 / hk00700 / usAAPL / bj430047
@@ -204,6 +209,89 @@ class AkshareCollector(BaseCollector):
         elif self.market == MarketCode.US:
             return self._get_us_stocks(symbols)
         return []
+
+    async def get_stock_sector(self, symbol: str) -> dict | None:
+        """A 股个股所属行业板块及其当日整体表现。
+
+        返回 {name, change_pct, rank, total, up_count, down_count, leader}，
+        用于判断「个股是独强还是随板块同涨/逆板块抗跌」。best-effort，失败返回 None。
+        """
+        if self.market != MarketCode.CN:
+            return None
+        try:
+            return self._get_cn_stock_sector(symbol)
+        except Exception as e:
+            logger.debug(f"获取个股板块表现失败 {symbol}: {e}")
+            return None
+
+    def _get_cn_stock_sector(self, symbol: str) -> dict | None:
+        import time
+
+        import akshare as ak
+
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # 1. symbol -> 所属东财行业（按日缓存，行业归属日内稳定）
+        cached = _SYMBOL_INDUSTRY_CACHE.get(symbol)
+        if cached and cached[0] == today:
+            industry = cached[1]
+        else:
+            info = ak.stock_individual_info_em(symbol=symbol)
+            kv = dict(zip(info["item"], info["value"]))
+            industry = str(kv.get("行业") or "").strip()
+            _SYMBOL_INDUSTRY_CACHE[symbol] = (today, industry)
+        if not industry or industry.lower() in ("-", "nan", "none"):
+            return None
+
+        # 2. 东财行业板块榜快照（与 stock_individual_info_em.行业 同命名体系，可直接匹配）
+        now = time.time()
+        df = _SECTOR_BOARD_CACHE.get("df")
+        if df is None or now - _SECTOR_BOARD_CACHE.get("ts", 0.0) > _SECTOR_BOARD_TTL_S:
+            df = ak.stock_board_industry_name_em()
+            _SECTOR_BOARD_CACHE["df"] = df
+            _SECTOR_BOARD_CACHE["ts"] = now
+
+        total = int(len(df))
+        row = df[df["板块名称"] == industry]
+        if row.empty:
+            return {"name": industry, "change_pct": None, "rank": None, "total": total}
+
+        r = row.iloc[0]
+
+        def _safe(col):
+            try:
+                return r[col] if col in df.columns else None
+            except Exception:
+                return None
+
+        try:
+            change_pct = float(_safe("涨跌幅"))
+        except (TypeError, ValueError):
+            change_pct = None
+
+        rank = None
+        if change_pct is not None and "涨跌幅" in df.columns:
+            try:
+                rank = int((df["涨跌幅"] > change_pct).sum()) + 1
+            except Exception:
+                rank = None
+
+        def _int(col):
+            v = _safe(col)
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
+        return {
+            "name": industry,
+            "change_pct": change_pct,
+            "rank": rank,
+            "total": total,
+            "up_count": _int("上涨家数"),
+            "down_count": _int("下跌家数"),
+            "leader": (str(_safe("领涨股票")) if _safe("领涨股票") is not None else None),
+        }
 
     def _get_cn_index(self) -> list[IndexData]:
         tencent_symbols = [f"{prefix}{symbol}" for symbol, _, prefix in CN_INDICES]

@@ -41,6 +41,7 @@ from src.agents.chart_analyst import ChartAnalystAgent
 from src.agents.intraday_monitor import IntradayMonitorAgent
 from src.agents.premarket_outlook import PremarketOutlookAgent
 from src.agents.tradingagents import TradingAgentsAgent
+from src.agents.caterpillar import CaterpillarAgent
 
 logger = logging.getLogger(__name__)
 
@@ -896,6 +897,7 @@ AGENT_REGISTRY: dict[str, type] = {
     "chart_analyst": ChartAnalystAgent,
     "intraday_monitor": IntradayMonitorAgent,
     "tradingagents": TradingAgentsAgent,
+    "caterpillar": CaterpillarAgent,
 }
 
 

@@ -130,6 +130,86 @@ function formatKlineMeta(meta?: Record<string, any>): string {
   return parts.join(' · ')
 }
 
+function parseAiResponseJson(raw?: string): Record<string, any> | null {
+  const s = String(raw || '').trim()
+  if (!s) return null
+  const candidates = [s]
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fence?.[1]) candidates.unshift(fence[1].trim())
+  if (/^json\s*[\r\n]/i.test(s)) candidates.unshift(s.replace(/^json\s*[\r\n]/i, '').trim())
+
+  for (const c of candidates) {
+    const start = c.indexOf('{')
+    const end = c.lastIndexOf('}')
+    const texts = [c, start >= 0 && end > start ? c.slice(start, end + 1) : '']
+    for (const text of texts) {
+      if (!text || !text.trim().startsWith('{')) continue
+      try {
+        const obj = JSON.parse(text)
+        if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj as Record<string, any>
+      } catch {
+        // try next candidate
+      }
+    }
+  }
+  return null
+}
+
+function textList(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map(x => String(x || '').trim()).filter(Boolean)
+  const s = String(raw || '').trim()
+  return s ? [s] : []
+}
+
+function AiResponseBlock({ response }: { response?: string }) {
+  const obj = parseAiResponseJson(response)
+  if (!obj) {
+    return (
+      <div className="text-[12px] text-foreground whitespace-pre-wrap bg-accent/30 rounded p-2 max-h-32 overflow-y-auto scrollbar">
+        {response}
+      </div>
+    )
+  }
+
+  const rows = [
+    ['建议', obj.action_label || obj.action],
+    ['信号', obj.signal],
+    ['理由', obj.reason],
+  ].filter(([, value]) => String(value || '').trim())
+  const groups = [
+    ['触发条件', textList(obj.triggers)],
+    ['失效条件', textList(obj.invalidations)],
+    ['风险提示', textList(obj.risks)],
+  ].filter(([, items]) => Array.isArray(items) && items.length > 0) as [string, string[]][]
+
+  if (rows.length === 0 && groups.length === 0) {
+    return (
+      <div className="text-[12px] text-muted-foreground bg-accent/30 rounded p-2">
+        无需提醒
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2 rounded bg-accent/30 p-2 text-[12px]">
+      {rows.map(([label, value]) => (
+        <div key={label} className="grid grid-cols-[56px_1fr] gap-2">
+          <span className="text-muted-foreground">{label}</span>
+          <span className="text-foreground whitespace-pre-wrap">{String(value)}</span>
+        </div>
+      ))}
+      {groups.map(([label, items]) => (
+        <div key={label} className="grid grid-cols-[56px_1fr] gap-2">
+          <span className="text-muted-foreground">{label}</span>
+          <div className="space-y-1 text-foreground">
+            {items.map((item, idx) => <div key={`${label}-${idx}`}>{item}</div>)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function SuggestionBadge({
   suggestion,
   stockName,
@@ -333,13 +413,11 @@ export function SuggestionBadge({
                 </div>
               )}
 
-              {/* AI 原始响应 */}
+              {/* AI 响应 */}
               {suggestion.ai_response && (
                 <div>
                   <div className="text-[11px] text-muted-foreground mb-1">AI 响应</div>
-                  <div className="text-[12px] text-foreground whitespace-pre-wrap bg-accent/30 rounded p-2 max-h-32 overflow-y-auto scrollbar">
-                    {suggestion.ai_response}
-                  </div>
+                  <AiResponseBlock response={suggestion.ai_response} />
                 </div>
               )}
 
@@ -541,13 +619,11 @@ export function SuggestionBadge({
               </div>
             )}
 
-            {/* AI 原始响应 */}
+            {/* AI 响应 */}
             {suggestion.ai_response && (
               <div>
                 <div className="text-[11px] text-muted-foreground mb-1">AI 响应</div>
-                <div className="text-[12px] text-foreground whitespace-pre-wrap bg-accent/30 rounded p-2 max-h-32 overflow-y-auto">
-                  {suggestion.ai_response}
-                </div>
+                <AiResponseBlock response={suggestion.ai_response} />
               </div>
             )}
 

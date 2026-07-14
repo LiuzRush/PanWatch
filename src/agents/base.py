@@ -211,6 +211,9 @@ class BaseAgent(ABC):
         elif self.name == "tradingagents":
             # 深度分析单次成本高,同标的 12 小时内不重复推送
             default = 12 * 60
+        # Caterpillar is high-frequency; rely on per-stock throttle + short TTL.
+        elif self.name == "caterpillar":
+            default = 15
         else:
             default = 60
 
