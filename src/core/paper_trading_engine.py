@@ -86,12 +86,37 @@ def _to_market(market: str) -> MarketCode:
         return MarketCode.CN
 
 
-def _is_trading_time(market: str) -> bool:
+def _is_trading_time(market: str, dt: datetime | None = None) -> bool:
     mc = _to_market(market)
     market_def = MARKETS.get(mc)
     if not market_def:
         return False
-    return market_def.is_trading_time()
+    return market_def.is_trading_time(dt)
+
+
+def _to_market_datetime(dt: datetime, market: str) -> datetime:
+    market_def = MARKETS.get(_to_market(market))
+    if not market_def:
+        return dt
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(market_def.get_tz())
+
+
+def _is_same_market_date(dt: datetime | None, market: str, now: datetime | None = None) -> bool:
+    if not dt:
+        return False
+    now = now or _utc_now()
+    return _to_market_datetime(dt, market).date() == _to_market_datetime(now, market).date()
+
+
+def _is_t1_locked(pos: PaperTradingPosition, now: datetime | None = None) -> bool:
+    """A 股 T+1: 当日新开仓位当日不可卖出。"""
+    return (pos.stock_market or "").upper() == "CN" and _is_same_market_date(
+        pos.opened_at,
+        "CN",
+        now=now,
+    )
 
 
 def _safe_float(v: Any) -> float | None:
@@ -294,6 +319,14 @@ class PaperTradingEngine:
         # 按投资比例排除不投入（比例为 0）的市场
         alloc = market_allocations_or_default(account)
         excluded = [m for m in ALL_MARKETS if alloc.get(m, 0.0) <= 0]
+        tradable_markets = [
+            m for m in ALL_MARKETS
+            if alloc.get(m, 0.0) > 0 and _is_trading_time(m)
+        ]
+        if not tradable_markets:
+            logger.debug("[模拟盘] 当前无可交易市场,跳过建仓扫描")
+            return 0, set(), []
+        query = query.filter(StrategySignalRun.stock_market.in_(tradable_markets))
         if excluded:
             query = query.filter(StrategySignalRun.stock_market.notin_(excluded))
         signals = query.order_by(StrategySignalRun.rank_score.desc()).limit(50).all()
@@ -349,6 +382,8 @@ class PaperTradingEngine:
             mkt = sig.stock_market
             if alloc.get(mkt, 0.0) <= 0:
                 continue  # 该市场比例为 0，不投入
+            if not _is_trading_time(mkt):
+                continue
             avail = market_cash.get(mkt, 0.0)
 
             # 仓位管理:按信号强度分配该市场预算(替换原固定 100 股)
@@ -497,11 +532,30 @@ class PaperTradingEngine:
     ) -> tuple[int, list[tuple[PaperTradingPosition, PaperTradingTrade]]]:
         """检查持仓止损/止盈/信号反转，自动平仓。skip_keys 中的股票跳过（本轮新建仓）。"""
         exit_events: list[tuple[PaperTradingPosition, PaperTradingTrade]] = []
-        positions = (
+        all_positions = (
             db.query(PaperTradingPosition)
             .filter(PaperTradingPosition.status == "open")
             .all()
         )
+        now = _utc_now()
+        positions: list[PaperTradingPosition] = []
+        for pos in all_positions:
+            if skip_keys and (pos.stock_symbol, pos.stock_market) in skip_keys:
+                continue
+            if not _is_trading_time(pos.stock_market):
+                logger.debug(
+                    "[模拟盘] 非交易时段跳过平仓检查: %s %s",
+                    pos.stock_symbol,
+                    pos.stock_market,
+                )
+                continue
+            if _is_t1_locked(pos, now=now):
+                logger.debug(
+                    "[模拟盘] A股T+1锁定,跳过当日卖出: %s",
+                    pos.stock_symbol,
+                )
+                continue
+            positions.append(pos)
         if not positions:
             return 0, exit_events
 
@@ -511,9 +565,6 @@ class PaperTradingEngine:
 
         closed = 0
         for pos in positions:
-            # 跳过本轮刚建仓的持仓
-            if skip_keys and (pos.stock_symbol, pos.stock_market) in skip_keys:
-                continue
             key = (pos.stock_market, pos.stock_symbol)
             quote = quotes.get(key)
             current_price = _safe_float(quote.get("current_price")) if quote else None
@@ -677,6 +728,10 @@ class PaperTradingEngine:
             )
             if not pos:
                 return {"ok": False, "error": "持仓不存在或已平仓"}
+            if not _is_trading_time(pos.stock_market):
+                return {"ok": False, "error": f"{pos.stock_market} 当前非交易时段，不能平仓"}
+            if _is_t1_locked(pos):
+                return {"ok": False, "error": "A股 T+1 限制：当日买入的模拟仓当日不能卖出"}
 
             # 获取最新报价(走 orchestrator,支持故障转移)
             mc = _to_market(pos.stock_market)

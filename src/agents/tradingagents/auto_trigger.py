@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -29,8 +30,25 @@ DEFAULT_CHANGE_PCT_THRESHOLD = 5.0
 DEFAULT_COOLDOWN_HOURS = 24
 
 
+def _agent_config(agent: AgentConfig | Any) -> dict:
+    """读取 AgentConfig 配置。
+
+    当前 ORM 字段是 `config`；早期自动触发代码曾使用 `raw_config`。
+    保留 raw_config 兼容，避免旧测试假对象或历史调用路径直接报错。
+    """
+    raw = getattr(agent, "config", None)
+    if raw is None:
+        raw = getattr(agent, "raw_config", None)
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    return raw if isinstance(raw, dict) else {}
+
+
 def _read_auto_trigger_config(db: Session) -> dict | None:
-    """从 AgentConfig.raw_config 读 auto_trigger 配置。
+    """从 AgentConfig.config 读 auto_trigger 配置。
 
     Returns:
         {
@@ -42,7 +60,7 @@ def _read_auto_trigger_config(db: Session) -> dict | None:
     agent = db.query(AgentConfig).filter(AgentConfig.name == "tradingagents").first()
     if not agent:
         return None
-    raw = agent.raw_config or {}
+    raw = _agent_config(agent)
     auto = raw.get("auto_trigger") or {}
     if not auto.get("enabled"):
         return None
@@ -69,7 +87,7 @@ def _within_cooldown(db: Session, stock_symbol: str, cooldown_hours: int) -> boo
 
 
 def _budget_allows(db: Session) -> bool:
-    """检查月度预算是否还有余量。预算从 tradingagents 的 raw_config.monthly_budget_usd 读。"""
+    """检查月度预算是否还有余量。预算从 tradingagents 的 config.monthly_budget_usd 读。"""
     try:
         from src.agents.tradingagents.cost_tracker import check_budget
     except ImportError:
@@ -78,7 +96,7 @@ def _budget_allows(db: Session) -> bool:
     agent = db.query(AgentConfig).filter(AgentConfig.name == "tradingagents").first()
     if not agent:
         return True
-    raw = agent.raw_config or {}
+    raw = _agent_config(agent)
     budget = float(raw.get("monthly_budget_usd") or 0.0)
     if budget <= 0:
         return True  # 没设上限 = 不限制

@@ -1,0 +1,4 @@
+interface:
+  display_name: "PanWatch Query Interfaces"
+  short_description: "Choose PanWatch query APIs for data, news, agents, pages."
+  default_prompt: "Use $panwatch-query-interfaces to choose the right PanWatch backend route, collector, or provider before implementing a page or agent that needs market data, news, K lines, opportunity pools, paper trading, AI, notifications, or external data."

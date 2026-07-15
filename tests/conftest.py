@@ -63,6 +63,7 @@ def _clear_market_caches():
         capital_flow_collector,
         discovery_collector,
         kline_collector,
+        sector_flow_collector,
     )
 
     def _clear():
@@ -70,6 +71,7 @@ def _clear_market_caches():
         akshare_collector._QUOTE_CACHE.clear()
         capital_flow_collector._FLOW_CACHE.clear()
         discovery_collector._DISCOVERY_CACHE.clear()
+        sector_flow_collector._SECTOR_FLOW_CACHE.clear()
 
     _clear()
     yield

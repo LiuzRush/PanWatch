@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
-from math import sqrt
+from math import exp, sqrt
 
 from sqlalchemy import and_, case, func
 
@@ -218,6 +218,34 @@ MAX_SINGLE_STRATEGY_SHARE = 0.42
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
+
+
+def _add_headroom_bonus(score: float, bonus: float, *, scale: float = 24.0) -> float:
+    """Add positive factors with diminishing returns near 100.
+
+    The old linear composition made high base scores (90+) plus quality/alpha
+    bonuses saturate at 100, wiping out rank differentiation. This keeps the
+    same factor direction while making the last few points progressively harder.
+    """
+    score = _clamp(float(score or 0.0), 0.0, 100.0)
+    bonus = float(bonus or 0.0)
+    if bonus <= 0:
+        return _clamp(score + bonus, 0.0, 100.0)
+    headroom = max(0.0, 100.0 - score)
+    if headroom <= 0:
+        return 100.0
+    scale = max(1.0, float(scale or 24.0))
+    return _clamp(score + headroom * (1.0 - exp(-bonus / scale)), 0.0, 100.0)
+
+
+def _apply_regime_adjustment(score: float, multiplier: float) -> float:
+    """Apply market regime without multiplying the entire 0-100 score range."""
+    score = _clamp(float(score or 0.0), 0.0, 100.0)
+    multiplier = float(multiplier or 1.0)
+    if multiplier >= 1.0:
+        boost = min(0.25, multiplier - 1.0)
+        return _clamp(score + max(0.0, 100.0 - score) * boost, 0.0, 100.0)
+    return _clamp(score * multiplier, 0.0, 100.0)
 
 
 def _safe_float(value) -> float | None:
@@ -875,25 +903,33 @@ def _compute_factor_breakdown(
     regime_multiplier += _clamp((regime_confidence - 0.5) * 0.06, -0.03, 0.03)
     regime_multiplier = _clamp(regime_multiplier, 0.85, 1.12)
 
-    # 每因子外置权重(默认 1.0 → 行为 = 现状,零回归)。snapshot 仍存 raw 因子分,
-    # 权重只作用于合成,确保 IC 测在原始因子上(见 factor_calibration 设计要点)。
+    # 每因子外置权重(默认 1.0)。snapshot 仍存 raw 因子分,权重只作用于合成,
+    # 确保 IC 测在原始因子上(见 factor_calibration 设计要点)。
     fw = factor_weights or {}
-    raw_score = (
-        base_score
-        + fw.get("alpha_score", 1.0) * alpha_score
+    has_entry = row.entry_low is not None or row.entry_high is not None
+    execution_penalty = 0.0
+    if action in ("buy", "add") and not has_entry:
+        # No entry window means this is not executable; force into watch semantics.
+        execution_penalty += 8.0
+    if action in ("buy", "add") and plan_quality < 90:
+        execution_penalty += 6.0
+
+    positive_score = (
+        fw.get("alpha_score", 1.0) * alpha_score
         + fw.get("catalyst_score", 1.0) * catalyst_score
         + fw.get("quality_score", 1.0) * quality_score
         + source_bonus  # v1: source_bonus 权重固定 1.0
     )
-    raw_score -= fw.get("risk_penalty", 1.0) * risk_penalty
-    raw_score -= fw.get("crowd_penalty", 1.0) * crowd_penalty
-    has_entry = row.entry_low is not None or row.entry_high is not None
-    if action in ("buy", "add") and not has_entry:
-        # No entry window means this is not executable; force into watch semantics.
-        raw_score -= 8.0
-    if action in ("buy", "add") and plan_quality < 90:
-        raw_score -= 6.0
-    final_score = _clamp(raw_score * float(weight or 1.0) * regime_multiplier, 0.0, 100.0)
+    penalty_score = (
+        fw.get("risk_penalty", 1.0) * risk_penalty
+        + fw.get("crowd_penalty", 1.0) * crowd_penalty
+        + execution_penalty
+    )
+    strategy_weight = max(0.0, float(weight or 1.0))
+    weighted_positive = positive_score * strategy_weight
+    anchor_score = _clamp(base_score - penalty_score, 0.0, 100.0)
+    raw_score = _add_headroom_bonus(anchor_score, weighted_positive)
+    final_score = _apply_regime_adjustment(raw_score, regime_multiplier)
     # Keep score semantics aligned with action/status: high scores should be actionable.
     if (row.status or "inactive") != "active":
         final_score = min(final_score, 69.0)
@@ -909,10 +945,15 @@ def _compute_factor_breakdown(
         "quality_score": round(quality_score, 4),
         "risk_penalty": round(risk_penalty, 4),
         "crowd_penalty": round(crowd_penalty, 4),
+        "execution_penalty": round(execution_penalty, 4),
         "source_bonus": round(source_bonus, 4),
         "regime": regime,
         "regime_label": _regime_label(regime),
         "regime_multiplier": round(regime_multiplier, 4),
+        "positive_score": round(positive_score, 4),
+        "weighted_positive_score": round(weighted_positive, 4),
+        "penalty_score": round(penalty_score, 4),
+        "anchor_score": round(anchor_score, 4),
         "raw_score": round(raw_score, 4),
         "weighted_score": round(final_score, 4),
         "weight": round(float(weight or 1.0), 4),

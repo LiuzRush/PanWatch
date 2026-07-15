@@ -8,9 +8,15 @@
 - `frontend/` — React + TypeScript (Vite + Tailwind). UI lives in `frontend/src/`.
 - `prompts/` — Prompt templates used by agents.
 - `config/`, `data/` — Config files and runtime data (persisted at `DATA_DIR`).
+- `skills/` — Project-local Codex skills versioned with this repository.
 - `server.py` — Backend entrypoint; also registers agents and data sources.
 - `tests/` — Placeholder for backend tests.
 - `build.sh`, `Dockerfile` — Build frontend and container images.
+
+## Project-Local Skills
+- Query interfaces: when implementing or reviewing agents, pages, dashboards, opportunity-pool features, paper-trading features, AI/provider checks, notifications, or any feature that needs market data, K-lines, news, announcements, capital flow, discovery data, or other external query paths, first read `skills/panwatch-query-interfaces/SKILL.md`.
+- Load `skills/panwatch-query-interfaces/references/query-interface-guide.md` when choosing the exact backend route, collector, provider, cache behavior, or local-only endpoint.
+- These skills are project-scoped. Do not assume they are installed globally or available in other repositories.
 
 ## Build, Test, and Development Commands
 - Backend (dev): `make dev-api`（自动 venv+依赖+uvicorn reload，监听 `:8000`）；或手动 `python server.py`。

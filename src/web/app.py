@@ -17,6 +17,8 @@ from src.web.api import (
     suggestions,
     quotes,
     klines,
+    capital_flow,
+    sector_flows,
     templates,
     feedback,
     discovery,
@@ -64,6 +66,30 @@ app.include_router(
 )
 app.include_router(
     klines.router, prefix="/api/klines", tags=["klines"], dependencies=protected
+)
+app.include_router(
+    capital_flow.router,
+    prefix="/api/capital-flow",
+    tags=["capital-flow"],
+    dependencies=protected,
+)
+app.include_router(
+    sector_flows.router,
+    prefix="/api/sector-flows",
+    tags=["sector-flows"],
+    dependencies=protected,
+)
+app.include_router(
+    sector_flows.sectors_router,
+    prefix="/api/sectors",
+    tags=["sectors"],
+    dependencies=protected,
+)
+app.include_router(
+    sector_flows.groups_router,
+    prefix="/api/sector-flow-groups",
+    tags=["sector-flow-groups"],
+    dependencies=protected,
 )
 app.include_router(
     insights.router, prefix="/api/insights", tags=["insights"], dependencies=protected

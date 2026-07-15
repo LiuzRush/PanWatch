@@ -9,8 +9,15 @@ import pytest
 from src.agents.tradingagents import auto_trigger
 
 
-def _make_agent(raw_config: dict):
+def _make_agent(config: dict):
     agent = MagicMock()
+    agent.config = config
+    return agent
+
+
+def _make_legacy_agent(raw_config: dict):
+    agent = MagicMock()
+    agent.config = None
     agent.raw_config = raw_config
     return agent
 
@@ -43,6 +50,21 @@ def test_no_agent_config_skips():
         db.query.return_value.filter.return_value.first.return_value = None
         ok, reason = auto_trigger.should_auto_trigger("601238", 8.0)
     assert ok is False
+
+
+def test_legacy_raw_config_is_supported():
+    """兼容旧 raw_config 假对象/历史调用路径。"""
+    with patch("src.agents.tradingagents.auto_trigger.SessionLocal") as session_factory, \
+         patch("src.agents.tradingagents.auto_trigger._within_cooldown", return_value=False), \
+         patch("src.agents.tradingagents.auto_trigger._budget_allows", return_value=True):
+        db = MagicMock()
+        session_factory.return_value = db
+        db.query.return_value.filter.return_value.first.return_value = _make_legacy_agent(
+            {"auto_trigger": {"enabled": True, "change_pct_threshold": 5.0}}
+        )
+        ok, reason = auto_trigger.should_auto_trigger("601238", 8.0)
+    assert ok is True
+    assert "达阈值" in reason
 
 
 def test_below_threshold_skips():

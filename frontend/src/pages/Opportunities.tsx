@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, RefreshCw, Share2, Sparkles } from 'lucide-react'
+import { AlertTriangle, Clock3, RefreshCw, Share2, Sparkles } from 'lucide-react'
 import {
   recommendationsApi,
   stocksApi,
@@ -18,6 +18,8 @@ import SignalScoreShareCard from '@/components/SignalScoreShareCard'
 type SourceFilter = 'all' | 'market_scan' | 'watchlist' | 'mixed'
 type HoldingFilter = 'all' | 'held' | 'unheld'
 type RiskFilter = 'all' | 'low' | 'medium' | 'high'
+const REFRESH_INTERVAL_OPTIONS = [1, 3, 5, 10] as const
+type RefreshIntervalMinute = typeof REFRESH_INTERVAL_OPTIONS[number]
 
 type GroupedSignal = {
   key: string
@@ -82,6 +84,38 @@ const DEFAULT_FILTERS = {
   strategy: 'all',
   risk: 'all' as const,
   minScore: '70',
+}
+
+function readRefreshInterval(): RefreshIntervalMinute {
+  const raw = Number(localStorage.getItem('panwatch_opportunities_refresh_min') || 5)
+  return REFRESH_INTERVAL_OPTIONS.includes(raw as RefreshIntervalMinute)
+    ? raw as RefreshIntervalMinute
+    : 5
+}
+
+function isCnMarketTradingSession(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(now)
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value || ''
+  const weekday = get('weekday')
+  if (weekday === 'Sat' || weekday === 'Sun') return false
+
+  const hour = Number(get('hour'))
+  const minute = Number(get('minute'))
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false
+
+  const minutes = hour * 60 + minute
+  const morningOpen = 9 * 60 + 30
+  const morningClose = 11 * 60 + 30
+  const afternoonOpen = 13 * 60
+  const afternoonClose = 15 * 60
+  return (minutes >= morningOpen && minutes < morningClose)
+    || (minutes >= afternoonOpen && minutes < afternoonClose)
 }
 
 const toneClass = (item: StrategySignalItem) => {
@@ -237,6 +271,7 @@ export default function OpportunitiesPage() {
   const [risk, setRisk] = useLocalStorage<RiskFilter>('panwatch_opportunities_risk_v3', DEFAULT_FILTERS.risk)
   const [minScore, setMinScore] = useLocalStorage('panwatch_opportunities_min_score_v3', DEFAULT_FILTERS.minScore)
   const [snapshotDate, setSnapshotDate] = useState('')
+  const [refreshIntervalMin, setRefreshIntervalMin] = useState<RefreshIntervalMinute>(() => readRefreshInterval())
 
   const [insightOpen, setInsightOpen] = useState(false)
   const [insightSymbol, setInsightSymbol] = useState('')
@@ -388,7 +423,8 @@ export default function OpportunitiesPage() {
     setError((prev) => prev || '刷新任务仍在后台执行，请稍后重试')
   }, [load, loadStats])
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return
     setRefreshing(true)
     setError('')
     try {
@@ -417,7 +453,17 @@ export default function OpportunitiesPage() {
     } finally {
       setRefreshing(false)
     }
-  }
+  }, [load, loadStats, pollRefreshCompletion, refreshing])
+
+  useEffect(() => {
+    localStorage.setItem('panwatch_opportunities_refresh_min', String(refreshIntervalMin))
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && isCnMarketTradingSession()) {
+        void handleRefresh()
+      }
+    }, refreshIntervalMin * 60 * 1000)
+    return () => window.clearInterval(id)
+  }, [handleRefresh, refreshIntervalMin])
 
   const resetFilters = useCallback(() => {
     setMarket(DEFAULT_FILTERS.market)
@@ -531,8 +577,26 @@ export default function OpportunitiesPage() {
             市场池优先，候选必须具备可执行入场计划
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] text-muted-foreground">{snapshotDate || '最新快照'}</span>
+          <div className="flex h-8 items-center gap-1.5 rounded-xl border border-border bg-card px-2">
+            <Clock3 className="h-3.5 w-3.5 text-muted-foreground" />
+            <Select
+              value={String(refreshIntervalMin)}
+              onValueChange={(v) => setRefreshIntervalMin(Number(v) as RefreshIntervalMinute)}
+            >
+              <SelectTrigger className="h-7 w-[94px] border-0 bg-transparent px-1 text-[12px] shadow-none focus:ring-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {REFRESH_INTERVAL_OPTIONS.map((min) => (
+                  <SelectItem key={min} value={String(min)}>
+                    {min} 分钟
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <Button
             variant="secondary"
             size="sm"

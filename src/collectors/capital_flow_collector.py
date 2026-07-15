@@ -36,6 +36,27 @@ class CapitalFlow:
     main_net_5d: float | None = None  # 5日主力净流入
 
 
+@dataclass
+class CapitalFlowHistoryItem:
+    """单日历史资金流向数据。"""
+
+    date: str
+    main_net_inflow: float
+    small_net_inflow: float
+    mid_net_inflow: float
+    big_net_inflow: float
+    super_net_inflow: float
+    main_net_inflow_pct: float
+    small_net_inflow_pct: float
+    mid_net_inflow_pct: float
+    big_net_inflow_pct: float
+    super_net_inflow_pct: float
+    close: float
+    change_pct: float
+    volume: float
+    amount: float
+
+
 def _get_eastmoney_secid(symbol: str, market: MarketCode) -> str:
     """转换为东方财富的 secid 格式"""
     if market == MarketCode.HK:
@@ -44,6 +65,7 @@ def _get_eastmoney_secid(symbol: str, market: MarketCode) -> str:
         return f"105.{symbol}"
     prefix = "1" if is_cn_sh(symbol) else "0"
     return f"{prefix}.{symbol}"
+
 
 def _safe_float(value):
     """将字符串或数字安全转换为 float，无效值返回 0.0"""
@@ -55,23 +77,43 @@ def _safe_float(value):
         return 0.0
 
 
+def _parse_flow_line(line: str) -> CapitalFlowHistoryItem | None:
+    """解析东方财富 fflow daykline 单行数据。"""
+    parts = (line or "").split(",")
+    if len(parts) < 13:
+        return None
+    return CapitalFlowHistoryItem(
+        date=str(parts[0]),
+        main_net_inflow=_safe_float(parts[1]),
+        small_net_inflow=_safe_float(parts[2]),
+        mid_net_inflow=_safe_float(parts[3]),
+        big_net_inflow=_safe_float(parts[4]),
+        super_net_inflow=_safe_float(parts[5]),
+        main_net_inflow_pct=_safe_float(parts[6]),
+        small_net_inflow_pct=_safe_float(parts[7]),
+        mid_net_inflow_pct=_safe_float(parts[8]),
+        big_net_inflow_pct=_safe_float(parts[9]),
+        super_net_inflow_pct=_safe_float(parts[10]),
+        close=_safe_float(parts[11]),
+        change_pct=_safe_float(parts[12]),
+        volume=_safe_float(parts[13]) if len(parts) > 13 else 0.0,
+        amount=_safe_float(parts[14]) if len(parts) > 14 else 0.0,
+    )
+
+
 class CapitalFlowCollector:
     """资金流向采集器"""
 
     def __init__(self, market: MarketCode):
         self.market = market
 
-    def get_capital_flow(self, symbol: str) -> CapitalFlow | None:
-        """获取单只股票的资金流向(直连 + 节流 + 退避重试 + TTL缓存)。"""
-        cache_key = f"{self.market.value}:{symbol}"
-        cached = _FLOW_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
-
+    def _fetch_flow_payload(self, symbol: str, *, limit: int | None = None) -> dict | None:
+        """拉取东方财富资金流原始 payload。limit=None 保持历史行为(lmt=0)。"""
         secid = _get_eastmoney_secid(symbol, self.market)
+        lmt = "0" if limit is None else str(max(1, int(limit)))
 
         params = {
-            "lmt": "0",
+            "lmt": lmt,
             "klt": "101",
             "secid": secid,
             "fields1": "f1,f2,f3,f7",
@@ -97,6 +139,16 @@ class CapitalFlowCollector:
             symbol=symbol,
             log_label="资金流",
         )
+        return data
+
+    def get_capital_flow(self, symbol: str) -> CapitalFlow | None:
+        """获取单只股票的资金流向(直连 + 节流 + 退避重试 + TTL缓存)。"""
+        cache_key = f"{self.market.value}:{symbol}"
+        cached = _FLOW_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        data = self._fetch_flow_payload(symbol)
         if not data:
             return None
 
@@ -113,12 +165,9 @@ class CapitalFlowCollector:
 
             # 1. 获取最新一条（最后一条）数据
             last_line = klines[-1]
-            # 字段索引（从0开始）：
-            # 0:日期, 1:主力净额, 2:小单净额, 3:中单净额, 4:大单净额, 5:超大单净额,
-            # 6:主力占比, 7:小单占比, 8:中单占比, 9:大单占比, 10:超大单占比,
-            # 11:收盘价, 12:涨跌幅, 13:成交量, 14:成交额
-            parts = last_line.split(',')
-            if len(parts) < 13:
+            latest = _parse_flow_line(last_line)
+            if latest is None:
+                parts = last_line.split(',')
                 logger.warning(f"klines 字段不足，实际长度 {len(parts)} 获取 {symbol} 资金流向失败: 无数据")
                 return None
 
@@ -127,19 +176,19 @@ class CapitalFlowCollector:
             last_five = klines[-5:] if len(klines) >= 5 else klines  # 不足5条则用全部
             main_net_5d = 0.0
             for line in last_five:
-                line_parts = line.split(',')
-                if len(line_parts) >= 2:
-                    main_net_5d += _safe_float(line_parts[1])
+                item = _parse_flow_line(line)
+                if item is not None:
+                    main_net_5d += item.main_net_inflow
 
             capital_flow = CapitalFlow(
                 symbol=str(d["code"]),
                 name=str(d["name"]),
-                main_net_inflow=_safe_float(parts[1]),  # 主力净流入
-                main_net_inflow_pct=_safe_float(parts[6]),  # 主力净流入占比
-                super_net_inflow=_safe_float(parts[5]),  # 超大单净流入
-                big_net_inflow=_safe_float(parts[4]),  # 大单净流入
-                mid_net_inflow=_safe_float(parts[3]),  # 中单净流入
-                small_net_inflow=_safe_float(parts[2]),  # 小单净流入
+                main_net_inflow=latest.main_net_inflow,
+                main_net_inflow_pct=latest.main_net_inflow_pct,
+                super_net_inflow=latest.super_net_inflow,
+                big_net_inflow=latest.big_net_inflow,
+                mid_net_inflow=latest.mid_net_inflow,
+                small_net_inflow=latest.small_net_inflow,
                 main_net_5d=main_net_5d,  # 5日主力净流入
             )
 
@@ -159,6 +208,39 @@ class CapitalFlowCollector:
         except Exception as e:
             logger.error(f"解析 {symbol} 资金流向失败: {e}{source_suffix()}")
             return None
+
+    def get_capital_flow_history(
+        self, symbol: str, days: int = 60
+    ) -> list[CapitalFlowHistoryItem]:
+        """获取单只股票日级历史资金流向序列。"""
+        safe_days = max(1, min(int(days or 60), 5000))
+        cache_key = f"history:{self.market.value}:{symbol}:{safe_days}"
+        cached = _FLOW_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        data = self._fetch_flow_payload(symbol, limit=safe_days)
+        if not data:
+            return []
+
+        try:
+            d = data.get("data") or {}
+            klines = d.get("klines") or []
+            if not klines:
+                logger.warning(f"没有 klines 数据 获取 {symbol} 历史资金流向失败: 无数据")
+                return []
+
+            items: list[CapitalFlowHistoryItem] = []
+            for line in klines[-safe_days:]:
+                item = _parse_flow_line(line)
+                if item is not None:
+                    items.append(item)
+
+            _FLOW_CACHE.set(cache_key, items)
+            return items
+        except Exception as e:
+            logger.error(f"解析 {symbol} 历史资金流向失败: {e}{source_suffix()}")
+            return []
 
     def get_capital_flow_summary(self, symbol: str) -> dict:
         """获取资金流向摘要（用于 prompt）"""
