@@ -13,9 +13,9 @@
 | K 线 | `src/collectors/kline_collector.py` | 腾讯 `web.ifzq.gtimg.cn`；东财 `push2his.eastmoney.com`；Stooq `stooq.com`；可选 Tushare/yfinance | 腾讯主路径；A/H 不足回退东财；US 不足回退 Stooq。 |
 | 新闻资讯 | `src/collectors/news_collector.py` | 东财搜索 `search-api-web.eastmoney.com`；东财公告 `np-anotice-stock.eastmoney.com`；雪球 `xueqiu.com` | 数据源由 `DataSource` 表配置，默认东财资讯 + 东财公告。 |
 | 公告事件 | `src/collectors/events_collector.py` | 东财公告 `np-anotice-stock.eastmoney.com`；全文 `np-cnotice-stock.eastmoney.com` | 事件类型由标题关键词归类。 |
-| 个股资金流 | `src/collectors/capital_flow_collector.py` | 东财 `push2his.eastmoney.com/api/qt/stock/fflow/daykline/get` | 日级资金流，默认 TTL 10 分钟；支持历史序列查询。 |
-| 板块/概念资金流 | `src/collectors/sector_flow_collector.py` | 东财 `push2.eastmoney.com/api/qt/clist/get`；东财 `push2his.eastmoney.com/api/qt/stock/fflow/daykline/get` | 行业/概念排行、历史、成分股资金流，接口层缓存约 60 秒。 |
-| 热门股票/板块 | `src/collectors/discovery_collector.py` | 东财 `push2.eastmoney.com/api/qt/clist/get` | 发现页、机会池市场扫描共用。 |
+| 个股资金流 | `src/collectors/capital_flow_collector.py` | 东财 `push2his.eastmoney.com`；备用 `push2delay.eastmoney.com` | 日级资金流，默认 TTL 10 分钟；主域名断连时自动切备用域名。 |
+| 板块/概念资金流 | `src/collectors/sector_flow_collector.py` | 东财 `push2/push2his.eastmoney.com`；备用 `push2delay.eastmoney.com` | 行业/概念排行、历史、成分股资金流，接口层缓存约 60 秒；支持域名回退。 |
+| 热门股票/板块 | `src/collectors/discovery_collector.py` | 东财 `push2.eastmoney.com`；备用 `push2delay.eastmoney.com` | 发现页、机会池市场扫描共用；直连主域名失败时自动切备用域名。 |
 | 股票清单/搜索 | `src/web/stock_list.py` | 东财 `80.push2delay.eastmoney.com`、`searchapi.eastmoney.com`；akshare 备用 | 缓存文件 `data/stock_list_cache.json`，TTL 7 天。 |
 | 汇率 | `src/web/api/accounts.py` | 新浪 `https://hq.sinajs.cn/list=fx_shkdcny/fx_susdcny` | 组合汇总中 HKD/USD 折算 CNY 使用，TTL 1 小时。 |
 | K 线截图 | `src/collectors/screenshot_collector.py` | 雪球、东方财富、新浪页面 | Playwright 打开网页截图。 |
@@ -345,7 +345,8 @@ K 线源顺序：腾讯日 K -> A/H 东财长历史兜底 -> US Stooq 兜底。�
 ## 七、缓存与代理注意事项
 
 - 国内行情/新闻采集器多数显式 `trust_env=False`，默认绕过环境变量代理，避免本地代理拦截行情接口。
-- 发现页可读取 UI 配置或环境变量中的 `http_proxy`，用于东财连接困难时显式代理。
+- 东财排行、发现和资金流链路会在 `push2/push2his` 连接级失败时自动切换 `push2delay`，避免单域名故障导致页面无数据。
+- 发现页先尝试直连主/备用域名，两者都失败后才使用 UI 配置的 `http_proxy`；Windows 系统代理不会隐式接管国内行情请求。
 - 新闻缓存 5 分钟；腾讯行情短 TTL 5 秒；个股资金流 10 分钟；板块/概念资金流排行约 60 秒；K 线按交易状态缓存，交易中短缓存、收盘后长缓存。
 - `/api/settings/update-check`、组合基准/归因、公告解读等也有独立缓存。
 - 若新增外部查询接口，建议同步更新本文件，并标明：路由、外部域名、是否走 `DataSource`、缓存 TTL、是否绕过代理、失败回退策略。

@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 
 # 东方财富资金流向 API
 EASTMONEY_FLOW_URL = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+EASTMONEY_FLOW_FALLBACK_URL = (
+    "https://push2delay.eastmoney.com/api/qt/stock/fflow/daykline/get"
+)
 
 # 资金流为日级数据、变动慢:中等 TTL 缓存 + 按 host 节流,避免直连调用每轮重复拉。
 _FLOW_HOST = "push2his.eastmoney.com"
@@ -130,6 +133,7 @@ class CapitalFlowCollector:
         data = market_get(
             EASTMONEY_FLOW_URL,
             host_key=_FLOW_HOST,
+            fallback_urls=(EASTMONEY_FLOW_FALLBACK_URL,),
             params=params,
             headers=headers,
             min_interval_s=_FLOW_MIN_INTERVAL_S,

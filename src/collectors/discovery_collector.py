@@ -36,6 +36,7 @@ class EastMoneyDiscoveryCollector:
 
     STOCKS_API = "https://push2.eastmoney.com/api/qt/clist/get"
     BOARDS_API = "https://push2.eastmoney.com/api/qt/clist/get"
+    FALLBACK_API = "https://push2delay.eastmoney.com/api/qt/clist/get"
 
     def __init__(
         self,
@@ -209,10 +210,23 @@ class EastMoneyDiscoveryCollector:
             )
         }
 
+        routes: list[tuple[str, str | None]] = [
+            (url, None),
+            (self.FALLBACK_API, None),
+        ]
+        if self.proxy:
+            routes.extend(
+                [
+                    (url, self.proxy),
+                    (self.FALLBACK_API, self.proxy),
+                ]
+            )
+
         last_exc: Exception | None = None
-        attempts = max(self.retries, 0) + 1
+        attempts = max(max(self.retries, 0) + 1, len(routes))
 
         for attempt in range(attempts):
+            request_url, request_proxy = routes[min(attempt, len(routes) - 1)]
             try:
                 timeout = httpx.Timeout(
                     self.timeout_s, connect=min(self.timeout_s, 6.0)
@@ -221,11 +235,11 @@ class EastMoneyDiscoveryCollector:
                     timeout=timeout,
                     verify=self.verify_ssl,
                     follow_redirects=True,
-                    trust_env=False,  # 不吃 env 代理(Telegram/AI 用),仅用显式配置的 self.proxy
+                    trust_env=False,  # 不继承 env/Windows 系统代理，仅使用当前探测路由
                     headers=headers,
-                    proxy=self.proxy,
+                    proxy=request_proxy,
                 ) as client:
-                    resp = await client.get(url, params=params)
+                    resp = await client.get(request_url, params=params)
                     resp.raise_for_status()
                     data = resp.json()
                     _DISCOVERY_CACHE.set(cache_key, data)

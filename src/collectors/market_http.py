@@ -68,6 +68,7 @@ def market_get(
     url: str,
     *,
     host_key: str,
+    fallback_urls: tuple[str, ...] | list[str] | None = None,
     params: dict | None = None,
     headers: dict | None = None,
     min_interval_s: float = 0.0,
@@ -84,9 +85,16 @@ def market_get(
     follow_redirects: bool = True,
     verify: bool = True,
 ) -> Any | None:
-    """直连 + 按 host 节流 + 退避重试。成功返回解析结果,失败返回 None 并打带来源的日志。"""
+    """直连 + 备用域名 + 按 host 节流 + 退避重试。成功返回解析结果，全部失败返回 None。"""
+    request_urls = [url]
+    for candidate in fallback_urls or ():
+        if candidate and candidate not in request_urls:
+            request_urls.append(candidate)
+
     last_err: Any = None
-    for attempt in range(max(1, retries + 1)):
+    attempts = max(1, retries + 1, len(request_urls))
+    for attempt in range(attempts):
+        request_url = request_urls[min(attempt, len(request_urls) - 1)]
         throttle(host_key, min_interval_s)
         try:
             with httpx.Client(
@@ -96,7 +104,7 @@ def market_get(
                 trust_env=trust_env,
                 verify=verify,
             ) as client:
-                resp = client.get(url, params=params)
+                resp = client.get(request_url, params=params)
                 if raise_for_status:
                     resp.raise_for_status()
                 if parse == "json":
@@ -108,7 +116,7 @@ def market_get(
                 return resp.text
         except Exception as e:
             last_err = e
-        if attempt < retries:
+        if attempt < attempts - 1:
             time.sleep(backoff * (attempt + 1) + random.uniform(0, jitter))
 
     if last_err is not None:

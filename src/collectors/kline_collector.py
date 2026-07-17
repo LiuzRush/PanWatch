@@ -781,9 +781,10 @@ class KlineCollector:
             if fallback:
                 klines = fallback
 
-        # CN/HK: Tencent 不足时用 Eastmoney 补全更长历史(仅当确实不足)
+        # CN/HK: 腾讯返回条数确实不足调用方请求时，才用 Eastmoney 补全历史。
         if self.market in (MarketCode.CN, MarketCode.HK):
-            if len(klines) < max(120, int(days * 0.6)):
+            required = max(1, int(days or 1))
+            if len(klines) < required:
                 em = _fetch_eastmoney_klines(
                     symbol, self.market, min(max(days, 3000), 20000)
                 )

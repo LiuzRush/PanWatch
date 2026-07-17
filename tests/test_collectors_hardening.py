@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import logging
 
-from src.collectors import akshare_collector, capital_flow_collector, market_http
+from src.collectors import (
+    akshare_collector,
+    capital_flow_collector,
+    kline_collector,
+    market_http,
+)
 from src.models.market import MarketCode
 
 
@@ -110,3 +115,74 @@ def test_market_get_retries_and_logs_source(monkeypatch, caplog):
     assert any(
         "[src=unit_src]" in r.getMessage() for r in caplog.records
     ), caplog.text
+
+
+def test_market_get_switches_to_fallback_url(monkeypatch):
+    calls: list[str] = []
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": {"ok": True}}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get(self, url, **kwargs):
+            calls.append(url)
+            if "primary.example" in url:
+                raise RuntimeError("server disconnected")
+            return _FakeResponse()
+
+    monkeypatch.setattr(market_http.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(market_http.time, "sleep", lambda *_: None)
+
+    result = market_http.market_get(
+        "https://primary.example/api",
+        fallback_urls=("https://fallback.example/api",),
+        host_key="example",
+        retries=1,
+        parse="json",
+    )
+
+    assert result == {"data": {"ok": True}}
+    assert calls == [
+        "https://primary.example/api",
+        "https://fallback.example/api",
+    ]
+
+
+def test_short_kline_skips_eastmoney_when_tencent_is_sufficient(monkeypatch):
+    rows = [
+        kline_collector.KlineData(
+            date=f"2026-07-{day:02d}",
+            open=10.0,
+            close=10.0,
+            high=10.0,
+            low=10.0,
+            volume=1.0,
+        )
+        for day in range(1, 11)
+    ]
+    monkeypatch.setattr(kline_collector, "_fetch_tencent_klines", lambda *args: rows)
+
+    def _unexpected_eastmoney(*args, **kwargs):
+        raise AssertionError("unexpected EastMoney fallback")
+
+    monkeypatch.setattr(
+        kline_collector, "_fetch_eastmoney_klines", _unexpected_eastmoney
+    )
+
+    result = kline_collector.KlineCollector(MarketCode.CN)._fetch_all_sources(
+        "600519", 10
+    )
+    assert result == rows

@@ -12,6 +12,12 @@ logger = logging.getLogger(__name__)
 
 EASTMONEY_CLIST_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 EASTMONEY_FLOW_URL = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+EASTMONEY_CLIST_FALLBACK_URL = (
+    "https://push2delay.eastmoney.com/api/qt/clist/get"
+)
+EASTMONEY_FLOW_FALLBACK_URL = (
+    "https://push2delay.eastmoney.com/api/qt/stock/fflow/daykline/get"
+)
 
 _SECTOR_FLOW_CACHE = TTLCache(default_ttl_sec=300.0)
 _CLIST_HOST = "push2.eastmoney.com"
@@ -258,6 +264,7 @@ class EastMoneySectorFlowCollector:
         data = market_get(
             EASTMONEY_FLOW_URL,
             host_key=_FLOW_HOST,
+            fallback_urls=(EASTMONEY_FLOW_FALLBACK_URL,),
             params=params,
             headers=headers,
             min_interval_s=_MIN_INTERVAL_S,
@@ -293,6 +300,7 @@ class EastMoneySectorFlowCollector:
         return market_get(
             EASTMONEY_CLIST_URL,
             host_key=_CLIST_HOST,
+            fallback_urls=(EASTMONEY_CLIST_FALLBACK_URL,),
             params=params,
             headers=headers,
             min_interval_s=_MIN_INTERVAL_S,

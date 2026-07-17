@@ -98,7 +98,9 @@ def _fetch_page(client: httpx.Client, page: int) -> list[dict]:
 
 def _fetch_from_eastmoney() -> list[dict]:
     """东方财富 A 股列表（HTTP 分页并发获取）"""
-    with httpx.Client(follow_redirects=True, headers=HEADERS, timeout=30) as client:
+    with httpx.Client(
+        follow_redirects=True, headers=HEADERS, timeout=30, trust_env=False
+    ) as client:
         # 第一页: 获取总数
         params = {**EASTMONEY_PARAMS, "pn": "1", "pz": str(PAGE_SIZE)}
         resp = client.get(EASTMONEY_URL, params=params)
@@ -137,7 +139,9 @@ def _fetch_hk_page(client: httpx.Client, page: int) -> list[dict]:
 
 def _fetch_hk_from_eastmoney() -> list[dict]:
     """东方财富港股列表"""
-    with httpx.Client(follow_redirects=True, headers=HEADERS, timeout=30) as client:
+    with httpx.Client(
+        follow_redirects=True, headers=HEADERS, timeout=30, trust_env=False
+    ) as client:
         params = {**EASTMONEY_HK_PARAMS, "pn": "1", "pz": str(PAGE_SIZE)}
         resp = client.get(EASTMONEY_URL, params=params)
         data = resp.json()
@@ -174,7 +178,9 @@ def _fetch_bj_page(client: httpx.Client, page: int) -> list[dict]:
 
 def _fetch_bj_from_eastmoney() -> list[dict]:
     """东方财富北交所列表（HTTP 分页并发获取）"""
-    with httpx.Client(follow_redirects=True, headers=HEADERS, timeout=30) as client:
+    with httpx.Client(
+        follow_redirects=True, headers=HEADERS, timeout=30, trust_env=False
+    ) as client:
         # 第一页: 获取总数
         params = {**EASTMONEY_BJ_PARAMS, "pn": "1", "pz": str(PAGE_SIZE)}
         resp = client.get(EASTMONEY_URL, params=params)
@@ -213,7 +219,9 @@ def _fetch_us_page(client: httpx.Client, page: int) -> list[dict]:
 
 def _fetch_us_from_eastmoney() -> list[dict]:
     """东方财富美股列表"""
-    with httpx.Client(follow_redirects=True, headers=HEADERS, timeout=30) as client:
+    with httpx.Client(
+        follow_redirects=True, headers=HEADERS, timeout=30, trust_env=False
+    ) as client:
         params = {**EASTMONEY_US_PARAMS, "pn": "1", "pz": str(PAGE_SIZE)}
         resp = client.get(EASTMONEY_URL, params=params)
         data = resp.json()
@@ -319,7 +327,7 @@ def _realtime_search(query: str, market: str = "", limit: int = 20) -> list[dict
     url = f"https://searchapi.eastmoney.com/api/suggest/get?input={urllib.parse.quote(query)}&type=14&count={limit * 5}"
 
     try:
-        with httpx.Client(timeout=5) as client:
+        with httpx.Client(timeout=5, trust_env=False) as client:
             resp = client.get(url, headers=HEADERS)
             data = resp.json()
     except Exception as e:
